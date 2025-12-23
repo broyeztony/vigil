@@ -1,0 +1,49 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15
+    container_name: vigil-postgres
+    environment:
+      POSTGRES_USER: vigil
+      POSTGRES_PASSWORD: vigil
+      POSTGRES_DB: vigil
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  mock-server:
+    build:
+      context: .
+      dockerfile: services/mock-server/Dockerfile
+    container_name: vigil-mock-server
+    ports:
+      - "8080:8080"
+    environment:
+      - PORT=8080
+
+  discovery-service:
+    build:
+      context: .
+      dockerfile: services/discovery-service/Dockerfile
+    container_name: vigil-discovery-service
+    environment:
+      - DATABASE_URL=postgres://vigil:vigil@postgres:5432/vigil?sslmode=disable
+      - TENANT_ID=00000000-0000-0000-0000-000000000001
+      - PROVIDER_API_URL=http://mock-server:8080
+      - PROVIDER_TYPE=google
+    command:
+      - sh
+      - -c
+      - |
+        sleep 5
+        ./discovery setup --database.url "postgres://vigil:vigil@postgres:5432/vigil?sslmode=disable" || true
+        ./discovery run --database.url "postgres://vigil:vigil@postgres:5432/vigil?sslmode=disable" --tenant_id "00000000-0000-0000-0000-000000000001" --provider.api_url "http://mock-server:8080" --provider.type "google"
+    depends_on:
+      - postgres
+      - mock-server
+
+volumes:
+  postgres_data:
+

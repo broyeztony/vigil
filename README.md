@@ -1,89 +1,146 @@
 # Vigil - Email Fraud Detection System
 
-## Overview
+Email discovery service for Google Workspace and Microsoft O365 that continuously polls for users and emails, stores metadata in PostgreSQL, and prepares emails for fraud analysis.
 
-Vigil is an email security tool that flags emails with potential financial fraud attempts (fake president, fake supplier, etc.) for clients using Google Workspace and Microsoft O365.
+![Vigil Architecture](SPECS/vigil.png)
 
-## Problem Statement
+*Vigil processing emails from 1030 concurrent users*
 
-We need to continuously poll a set of tenants (paying clients) to:
-1. Discover new users for each tenant
-2. Poll each user for new emails
-3. Analyze emails for fraud indicators
-4. Scale to handle 10 million emails per day (~116 emails/second average, ~300-400/second peak)
+## Architecture
 
-## Architecture Decisions
+### Key Components
 
-### Data Storage Strategy
+- **Mock Server**: Simulates Google/Microsoft provider APIs (port 8080)
+- **Discovery Service**: 
+  - **User Discovery**: Polls provider every 1 minute, sends ADD_USER/REMOVE_USER messages
+  - **Email Discovery**: Receives messages, creates channel generator per user (polls every 20 seconds)
+  - **Fan-in Pattern**: Combines all user channels into one processing stream
+  - **Processing Loop**: Fingerprint deduplication, DB storage, queue sending (stub)
 
-**Metadata-only storage in PostgreSQL**: We store only email metadata (message_id, received_at, sender, subject, snippet) rather than full email content. This keeps storage manageable at scale (~1-2KB per email vs ~50KB for full content).
+- **PostgreSQL**: Stores users, emails (metadata only), and user_emails junction table
 
-For reprocessing, we fetch full content from the provider API using `received_at` and match by `message_id`. This avoids replicating massive amounts of data while still allowing us to reprocess emails when needed.
+### Design Decisions
 
-**State tracking**: PostgreSQL stores:
-- Tenant registry (active tenants, provider type, credentials)
-- User discovery state (which users we've found, last check time)
-- Email metadata (what we've fetched, when)
-- Analysis results (fraud scores, flags, features)
+- **Metadata-only storage**: Stores email fingerprints and metadata, not full content (saves ~180TB/year at 10M emails/day)
+- **Message-based decoupling**: User discovery and email discovery communicate via messages (enables separate pods later)
+- **Incremental polling**: Tracks `last_email_received` per user for efficient polling
+- **Channel generator pattern**: One goroutine per user for concurrent email discovery
+- **Dynamic fan-in**: Automatically recreates when users are added/removed
 
-### Processing Pipeline
+## Quick Start
 
-**Two-stage architecture**:
+```bash
+# Start all services (PostgreSQL, mock-server, discovery-service)
+docker-compose up -d --build
 
-1. **Ingestion Service**: Continuously polls Microsoft/Google APIs
-   - Fetches users for each tenant
-   - Fetches new emails for each user (using `receivedAfter` for incremental polling)
-   - Enqueues emails to a message queue for analysis
+# Watch logs
+docker-compose logs -f discovery-service
 
-2. **Analysis Workers**: Consume from queue
-   - Fetch full email content from provider API when needed
-   - Extract features
-   - Run fraud detection (rules + ML models)
-   - Store results in PostgreSQL
+# Stop all services
+docker-compose down
+```
 
-**Queue-based decoupling**: A message queue (Kafka/RabbitMQ) decouples ingestion from analysis, allowing:
-- Independent scaling of ingestion vs analysis
-- Handling bursts in email volume
-- Resilience to failures (emails stay in queue if workers fail)
+## Local Development
 
-### Fraud Detection Pipeline
+### 1. Start PostgreSQL
 
-**Multi-stage approach**:
+```bash
+docker-compose up -d postgres
+```
 
-1. **Quick Rules**: Fast filtering for obvious patterns
-   - Sender domain mismatches
-   - Suspicious keywords
-   - Unknown sender requesting money
+### 2. Setup Database
 
-2. **ML/Analysis**: For emails passing initial rules
-   - HuggingFace models for text classification
-   - Feature extraction (sender patterns, timing, relationships)
-   - Combined scoring
+```bash
+go run ./services/discovery-service/cmd/discovery setup \
+  --database.url "postgres://vigil:vigil@localhost:5432/vigil?sslmode=disable"
+```
 
-3. **Scoring**: Output fraud score (0-100) rather than binary
-   - Store all features and scores for model improvement
-   - Enable manual review workflows
+### 3. Start Mock Server
 
-## Key Questions
+```bash
+# Terminal 1
+go run ./services/mock-server/main.go
+```
 
-**Critical unknown**: What's the expected latency from email receipt to fraud detection?
-- Real-time (minutes) vs batch (hours/days) determines polling frequency
-- Affects rate limit handling and prioritization strategies
-- Since we're polling provider APIs (no webhooks), this is always scheduled batch processing - the question is how frequently we schedule it
+Or with Docker:
+```bash
+docker-compose up -d mock-server
+```
 
-## Scalability Considerations
+### 4. Run Discovery Service
 
-At 10M emails/day:
-- Horizontal scaling via worker pools
-- Batch processing where possible
-- Partitioning by tenant/user
-- Caching for user/tenant lookups
-- Rate limit management for provider APIs
+```bash
+# Terminal 2
+go run ./services/discovery-service/cmd/discovery run \
+  --database.url "postgres://vigil:vigil@localhost:5432/vigil?sslmode=disable" \
+  --tenant_id "00000000-0000-0000-0000-000000000001" \
+  --provider.api_url "http://localhost:8080" \
+  --provider.type "google"
+```
 
-## Reliability
+## API Endpoints
 
-- Idempotent processing (message_id deduplication)
-- Dead-letter queues for failures
-- Retries with exponential backoff
-- Checkpointing for resume after failures
+### Mock Server (Port 8080)
 
+- `GET /health` - Health check
+- `GET /google/users/:tenantId` - Get users for a tenant
+- `GET /google/emails/:userId?receivedAfter=...&orderBy=...` - Get emails for a user
+- `POST /admin/users/add?numUsers=20` - Add users to mock server (for testing)
+
+**Example:**
+```bash
+# Add 20 users
+curl -X POST http://localhost:8080/admin/users/add?numUsers=20
+
+# Get users
+curl http://localhost:8080/google/users/00000000-0000-0000-0000-000000000001
+```
+
+## How It Works
+
+1. **User Discovery** (every 1 minute):
+   - Polls provider API for users
+   - Upserts users to database
+   - Sends `ADD_USER`/`REMOVE_USER` messages
+
+2. **Email Discovery** (receives messages):
+   - Starts email polling goroutine per user (30s interval)
+   - Uses `last_email_received` for incremental polling
+   - Sends emails to fan-in channel
+
+3. **Processing**:
+   - Fingerprint deduplication (SHA256 of body)
+   - Stores metadata in PostgreSQL
+   - Sends unique emails to analysis queue (stub implementation)
+   - Updates user timestamps
+
+## Testing
+
+```bash
+# Run test
+./test.sh
+
+# Inspect database
+./inspect-db.sh 
+
+# DIY
+docker exec -it vigil-postgres psql -U vigil -d vigil -c "SELECT COUNT(*) FROM users;"
+docker exec -it vigil-postgres psql -U vigil -d vigil -c "SELECT COUNT(*) FROM emails;"
+
+# Add more users to test discovery
+curl -X POST http://localhost:8080/admin/users/add?numUsers=10
+```
+
+## Database Schema
+
+- **users**: `id`, `email`, `last_email_check`, `last_email_received`
+- **emails**: `id` (message_id), `fingerprint` (SHA256), `received_at`
+- **user_emails**: Junction table linking users to emails (many-to-many)
+
+## Future Work
+
+- [ ] Integrate actual message queue (Kafka/RabbitMQ/NATS) for analysis
+- [ ] Build analysis workers for fraud detection
+- [ ] Add rate limiting and retry logic
+- [ ] Support multiple tenants
+- [ ] Add metrics and monitoring
