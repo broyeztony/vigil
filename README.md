@@ -15,7 +15,7 @@ Email discovery service for Google Workspace and Microsoft O365 that continuousl
 - **Mock Server**: Simulates Google/Microsoft provider APIs (port 8080)
 - **Discovery Service**: 
   - **User Discovery**: Polls provider every 1 minute, sends ADD_USER/REMOVE_USER messages
-  - **Email Discovery**: Receives messages, creates channel generator per user (polls every 20 seconds)
+  - **Email Discovery**: Receives messages, creates channel generator per user (polls every 30 seconds)
   - **Fan-in Pattern**: Combines all user channels into one processing stream
   - **Processing Loop**: Fingerprint deduplication, DB storage, queue sending (stub)
 
@@ -23,11 +23,12 @@ Email discovery service for Google Workspace and Microsoft O365 that continuousl
 
 ### Design Decisions
 
-- **Metadata-only storage**: Stores email fingerprints and metadata, not full content (saves ~180TB/year at 10M emails/day)
-- **Message-based decoupling**: User discovery and email discovery communicate via messages (enables separate pods later)
-- **Incremental polling**: Tracks `last_email_received` per user for efficient polling
-- **Channel generator pattern**: One goroutine per user for concurrent email discovery
-- **Dynamic fan-in**: Automatically recreates when users are added/removed
+- **Zero Copy Principle**: Only stores email metadata (fingerprint, received_at), not full content. Full email content is fetched from provider API only when needed for analysis. This saves ~180TB/year at 10M emails/day and ensures GDPR compliance.
+- **Channel Generator Pattern**: Each user = 1 goroutine + 1 buffered channel. The goroutine polls the provider API every 30 seconds and streams emails to its dedicated channel.
+- **Fan-in Pattern**: A central collection point combines all user channels into a single processing stream. The fan-in is dynamically recreated when users are added/removed.
+- **Message-based Decoupling**: User discovery and email discovery communicate via messages (`ADD_USER`/`REMOVE_USER`), enabling separate pods/namespaces later.
+- **Incremental Polling**: Tracks `last_email_received` per user for efficient incremental polling (only fetches new emails).
+- **Kubernetes-Ready**: Designed for Kubernetes with 1 tenant = 1 namespace. Each namespace runs a dedicated discovery service pod managing all users for that tenant. A Kubernetes operator could be implemented for tenant provisioning and lifecycle management.
 
 ## Quick Start
 
@@ -139,10 +140,16 @@ curl -X POST http://localhost:8080/admin/users/add?numUsers=10
 - **emails**: `id` (message_id), `fingerprint` (SHA256), `received_at`
 - **user_emails**: Junction table linking users to emails (many-to-many)
 
+## Implementation Notes
+
+- **Code Generation**: Some portions of the code were AI-generated, but based on prototyping code and technical decisions that can be fully justified. The core architecture and concurrency patterns were designed and prototyped manually.
+- **Email Analysis/ML**: The email analysis and machine learning components are not fully documented yet. This is currently being worked on in preparation for a potential in-person interview discussion.
+
 ## Future Work
 
 - [ ] Integrate actual message queue (Kafka/RabbitMQ/NATS) for analysis
-- [ ] Build analysis workers for fraud detection
-- [ ] Add rate limiting and retry logic
-- [ ] Support multiple tenants
-- [ ] Add metrics and monitoring
+- [ ] Build analysis workers for fraud detection (ML models, feature extraction)
+- [ ] Add rate limiting and retry logic (handle 429 responses with exponential backoff)
+- [ ] Implement Kubernetes operator for tenant provisioning and lifecycle management
+- [ ] Add comprehensive metrics and monitoring (Prometheus, Grafana)
+- [ ] Support multiple tenants with proper isolation
