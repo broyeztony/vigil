@@ -26,7 +26,7 @@ SELECT 'user_emails', COUNT(*) FROM user_emails;
 "
 
 echo ""
-echo "Recent emails (last 10):"
+echo "Recent emails (last 5):"
 docker exec vigil-postgres psql -U vigil -d vigil -c "
 SELECT 
     e.id,
@@ -37,11 +37,11 @@ FROM emails e
 LEFT JOIN user_emails ue ON e.id = ue.email_id
 GROUP BY e.id, e.fingerprint, e.received_at
 ORDER BY e.received_at DESC
-LIMIT 10;
+LIMIT 5;
 "
 
 echo ""
-echo "Top 20 users by email count:"
+echo "Top 10 users by email count:"
 docker exec vigil-postgres psql -U vigil -d vigil -c "
 SELECT 
     u.email,
@@ -51,7 +51,7 @@ FROM users u
 LEFT JOIN user_emails ue ON u.id = ue.user_id
 GROUP BY u.id, u.email, u.last_email_received
 ORDER BY email_count DESC
-LIMIT 20;
+LIMIT 10;
 "
 
 echo ""
@@ -70,5 +70,5 @@ SELECT
 FROM users
 WHERE last_email_check > NOW() - INTERVAL '5 minutes'
 ORDER BY last_email_check DESC
-LIMIT 20;
+LIMIT 10;
 "

@@ -3,7 +3,8 @@
 echo "Starting Vigil system..."
 
 docker-compose down -v 2>/dev/null || true
-docker-compose up -d --build
+docker-compose build --no-cache
+docker-compose up -d
 
 echo ""
 echo "Waiting 15 seconds for services to start..."

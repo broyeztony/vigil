@@ -3,9 +3,11 @@ package discovery
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"log"
+	"math/rand"
 	"sort"
 	"strings"
 	"sync"
@@ -55,6 +57,8 @@ const (
 	MessageAddUser    = "ADD_USER"
 	MessageRemoveUser = "REMOVE_USER"
 	PollingInterval   = 30 * time.Second // Fixed 30 seconds for all users
+	ChannelBufferSize = 50               // Buffered channel size per user
+	PollingJitterMax  = 30 * time.Second // Maximum jitter to stagger initial polls
 )
 
 func NewService() *Service {
@@ -363,20 +367,32 @@ type EmailWithUser struct {
 	UserID uuid.UUID
 }
 
-// discoverEmailsForUser polls for emails for a single user with fixed 20-second interval
+// discoverEmailsForUser polls for emails for a single user with fixed 30-second interval
 // Returns a buffered channel (channel generator pattern)
 // Buffered to avoid blocking polling goroutine if processing is slow
+// Uses staggered initial polling to avoid thundering herd problem
 func (s *Service) discoverEmailsForUser(ctx context.Context, user discoverymodels.User) <-chan EmailWithUser {
-	emailCh := make(chan EmailWithUser, 100) // Buffered channel
+	emailCh := make(chan EmailWithUser, ChannelBufferSize) // Buffered channel
 
 	go func() {
 		defer close(emailCh)
 
+		// Calculate initial delay based on user ID to stagger polling
+		// This ensures users don't all poll at the same time
+		initialDelay := s.calculateInitialDelay(user.ID)
+
+		// Wait for initial delay before first poll
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(initialDelay):
+			// Initial poll after staggered delay
+			s.pollEmailsForUser(user, emailCh)
+		}
+
+		// Create ticker for subsequent polls (every 30 seconds)
 		ticker := time.NewTicker(PollingInterval)
 		defer ticker.Stop()
-
-		// Initial poll
-		s.pollEmailsForUser(user, emailCh)
 
 		for {
 			select {
@@ -389,6 +405,19 @@ func (s *Service) discoverEmailsForUser(ctx context.Context, user discoverymodel
 	}()
 
 	return emailCh
+}
+
+// calculateInitialDelay calculates a deterministic but distributed delay for a user
+// based on their UUID. This ensures each user starts polling at a slightly different time
+// to avoid thundering herd, while being deterministic (same user = same delay).
+func (s *Service) calculateInitialDelay(userID uuid.UUID) time.Duration {
+	// Use first 8 bytes of UUID as a seed for delay calculation
+	bytes := userID[:8]
+	seed := binary.BigEndian.Uint64(bytes)
+
+	// Map to 0-PollingJitterMax range
+	delayNanos := seed % uint64(PollingJitterMax.Nanoseconds())
+	return time.Duration(delayNanos)
 }
 
 // pollEmailsForUser polls for emails and sends them to the channel
@@ -664,15 +693,20 @@ func fanIn(channels []<-chan EmailWithUser) <-chan EmailWithUser {
 }
 
 // logPerformanceMetrics logs aggregated performance metrics periodically
+// Uses jittered intervals to avoid synchronized log bursts
 func (s *Service) logPerformanceMetrics(ctx context.Context) {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
+	baseInterval := 5 * time.Second
+	jitterRange := 2 * time.Second // ±1 second jitter
 
 	for {
+		// Calculate jittered interval (4-6 seconds)
+		jitter := time.Duration(rand.Int63n(int64(jitterRange))) - jitterRange/2
+		interval := baseInterval + jitter
+
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-time.After(interval):
 			s.logMetrics()
 		}
 	}
@@ -714,21 +748,20 @@ func (s *Service) logMetrics() {
 	totalDiscovered := atomic.LoadInt64(&s.emailsDiscovered)
 	totalToQueue := atomic.LoadInt64(&s.emailsToQueue)
 
-	// Log performance summary
-	log.Printf("=== Performance Metrics ===")
-	log.Printf("Total emails discovered: %d | Sent to queue: %d", totalDiscovered, totalToQueue)
+	// Log performance summary (column-based format for readability)
+	log.Printf("📊 Metrics | Discovered: %d | Queued: %d", totalDiscovered, totalToQueue)
 
 	if len(stats) > 0 {
-		log.Printf("Top 30 users by email count:")
-		topN := 30
+		topN := 3 // Show top 3 users
 		if len(stats) < topN {
 			topN = len(stats)
 		}
+
+		// Display top users in column format
 		for i := 0; i < topN; i++ {
-			log.Printf("  %d. %s: %d emails", i+1, stats[i].email, stats[i].count)
+			log.Printf("   %d. %-50s %d emails", i+1, stats[i].email, stats[i].count)
 		}
 	}
-	log.Printf("==========================")
 }
 
 // sendToAnalysisQueue sends an email to the analysis queue for fraud detection.

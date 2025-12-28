@@ -2,9 +2,9 @@
 
 Email discovery service for Google Workspace and Microsoft O365 that continuously polls for users and emails, stores metadata in PostgreSQL, and prepares emails for fraud analysis.
 
-![Vigil Demo](SPECS/vigil.png)
+![Vigil Demo](SPECS/vigil_5000.png)
 
-*Vigil processing emails from 1030 concurrent users*
+*Vigil graceful shutdown after processing ~270K emails from 5000 concurrent users after ~15m*
 
 ## Architecture
 

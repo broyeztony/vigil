@@ -27,34 +27,34 @@ var (
 	}
 
 	// Static user list - maintained across calls
-	userList      []models.ProviderUser
-	userListMutex sync.RWMutex
+	userList        []models.ProviderUser
+	userListMutex   sync.RWMutex
 	defaultTenantID uuid.UUID
-	userCounter   int // Counter for generating unique user names
-	
+	userCounter     int // Counter for generating unique user names
+
 	// Email storage - maintained in memory per user
-	emailStore      map[uuid.UUID][]models.ProviderEmail
-	emailStoreMutex sync.RWMutex
+	emailStore           map[uuid.UUID][]models.ProviderEmail
+	emailStoreMutex      sync.RWMutex
 	emailGenerationStart time.Time
 )
 
 func init() {
 	// Initialize with a default tenant ID
 	defaultTenantID = uuid.MustParse("00000000-0000-0000-0000-000000000001")
-	
-	// Initialize with 1000 users
-	userList = make([]models.ProviderUser, 0, 1000)
+
+	// Initialize with 5000 users
+	userList = make([]models.ProviderUser, 0, 5000)
 	emailStore = make(map[uuid.UUID][]models.ProviderEmail)
 	emailGenerationStart = time.Now()
-	
-	for i := 0; i < 1000; i++ {
+
+	for i := 0; i < 5000; i++ {
 		user := generateUser(defaultTenantID, i)
 		userList = append(userList, user)
 		// Initialize empty email list for each user
 		emailStore[user.ID] = make([]models.ProviderEmail, 0)
 	}
-	userCounter = 1000
-	
+	userCounter = 5000
+
 	// Start background goroutine to generate emails every 30 seconds
 	go generateEmailsPeriodically()
 }
@@ -63,7 +63,7 @@ func generateUser(tenantID uuid.UUID, index int) models.ProviderUser {
 	firstName := firstNames[index%len(firstNames)]
 	lastName := lastNames[index%len(lastNames)]
 	domain := domains[index%len(domains)]
-	
+
 	return models.ProviderUser{
 		ID:        uuid.New(),
 		Email:     fmt.Sprintf("%s.%s.%d@%s", firstName, lastName, index, domain),
@@ -79,11 +79,11 @@ func generateUser(tenantID uuid.UUID, index int) models.ProviderUser {
 func GetGoogleUsers(tenantID uuid.UUID) ([]models.ProviderUser, error) {
 	userListMutex.RLock()
 	defer userListMutex.RUnlock()
-	
+
 	// Return a copy of the list to prevent external modification
 	users := make([]models.ProviderUser, len(userList))
 	copy(users, userList)
-	
+
 	return users, nil
 }
 
@@ -92,12 +92,12 @@ func AddUsers(numUsers int) (int, error) {
 	if numUsers < 1 {
 		return 0, fmt.Errorf("numUsers must be at least 1")
 	}
-	
+
 	userListMutex.Lock()
 	emailStoreMutex.Lock()
 	defer userListMutex.Unlock()
 	defer emailStoreMutex.Unlock()
-	
+
 	for i := 0; i < numUsers; i++ {
 		user := generateUser(defaultTenantID, userCounter)
 		userList = append(userList, user)
@@ -105,7 +105,7 @@ func AddUsers(numUsers int) (int, error) {
 		emailStore[user.ID] = make([]models.ProviderEmail, 0)
 		userCounter++
 	}
-	
+
 	return len(userList), nil
 }
 
@@ -113,33 +113,33 @@ func AddUsers(numUsers int) (int, error) {
 func generateEmailsPeriodically() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
-	
+
 	for range ticker.C {
 		userListMutex.RLock()
 		users := make([]models.ProviderUser, len(userList))
 		copy(users, userList)
 		userListMutex.RUnlock()
-		
+
 		emailStoreMutex.Lock()
 		now := time.Now()
-		
+
 		for _, user := range users {
 			// Generate 0-3 emails for this user
 			numEmails := rand.Intn(4) // 0, 1, 2, or 3
-			
+
 			for i := 0; i < numEmails; i++ {
 				// Generate timestamp slightly before now (within last 30 seconds)
 				// Spread them out a bit
 				secondsAgo := time.Duration(rand.Intn(30)) * time.Second
 				receivedAt := now.Add(-secondsAgo)
-				
+
 				// Get current email count for this user to use as unique identifier
 				emailCount := len(emailStore[user.ID])
 				email := generateEmail(user.ID, user.Email, user.Name, receivedAt, emailCount, i)
 				emailStore[user.ID] = append(emailStore[user.ID], email)
 			}
 		}
-		
+
 		emailStoreMutex.Unlock()
 	}
 }
@@ -147,9 +147,9 @@ func generateEmailsPeriodically() {
 func generateEmail(userID uuid.UUID, userEmail string, userName string, receivedAt time.Time, emailIndex int, batchIndex int) models.ProviderEmail {
 	subject := subjects[rand.Intn(len(subjects))]
 	fromDomain := domains[rand.Intn(len(domains))]
-	fromEmail := fmt.Sprintf("sender%d@%s", rand.Intn(10000), fromDomain)
+	fromEmail := fmt.Sprintf("sender%d@%s", rand.Intn(50000), fromDomain)
 	messageID := uuid.New()
-	
+
 	// Include recipient info in body to make emails unique per user
 	// Add multiple unique identifiers to ensure each email has a unique fingerprint
 	bodyContent := fmt.Sprintf(
@@ -170,15 +170,15 @@ func generateEmail(userID uuid.UUID, userEmail string, userName string, received
 		messageID.String(),
 		emailIndex,
 		batchIndex,
-		rand.Intn(1000000), // Random token for extra uniqueness
+		rand.Intn(5000000), // Random token for extra uniqueness
 		userID.String(),
 	)
-	
+
 	return models.ProviderEmail{
 		MessageID:  messageID.String(),
 		UserID:     userID,
 		From:       fromEmail,
-		To:         userEmail, // Send to the actual user
+		To:         userEmail,                                   // Send to the actual user
 		Subject:    fmt.Sprintf("%s [%d]", subject, emailIndex), // Add index to subject too
 		Snippet:    fmt.Sprintf("This is a snippet for: %s", subject),
 		ReceivedAt: receivedAt,
@@ -190,13 +190,13 @@ func generateEmail(userID uuid.UUID, userEmail string, userName string, received
 func GetGoogleEmails(userID uuid.UUID, receivedAfter time.Time, orderBy string) ([]models.ProviderEmail, error) {
 	emailStoreMutex.RLock()
 	defer emailStoreMutex.RUnlock()
-	
+
 	userEmails, exists := emailStore[userID]
 	if !exists {
 		// User doesn't exist, return empty list
 		return []models.ProviderEmail{}, nil
 	}
-	
+
 	// Filter emails by receivedAfter
 	filtered := make([]models.ProviderEmail, 0)
 	for _, email := range userEmails {
@@ -204,7 +204,7 @@ func GetGoogleEmails(userID uuid.UUID, receivedAfter time.Time, orderBy string) 
 			filtered = append(filtered, email)
 		}
 	}
-	
+
 	// Sort by received_at
 	if orderBy == "received_at" || orderBy == "" {
 		// Sort ascending
@@ -217,7 +217,6 @@ func GetGoogleEmails(userID uuid.UUID, receivedAfter time.Time, orderBy string) 
 			return filtered[i].ReceivedAt.After(filtered[j].ReceivedAt)
 		})
 	}
-	
+
 	return filtered, nil
 }
-
