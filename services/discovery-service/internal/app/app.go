@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -55,9 +56,26 @@ var runCmd = &cobra.Command{
 		// Wait for signal or error
 		select {
 		case <-sigChan:
-			fmt.Println("\nShutting down...")
+			fmt.Println("\nShutting down gracefully...")
 			cancel()
-			return <-errChan
+			
+			// Wait for service to stop (with timeout)
+			graceful := service.Shutdown(10 * time.Second)
+			if !graceful {
+				fmt.Println("Warning: Some operations may not have completed")
+			}
+			
+			// Wait for Run() to return
+			select {
+			case err := <-errChan:
+				if err != nil {
+					return err
+				}
+			case <-time.After(2 * time.Second):
+				fmt.Println("Service did not stop within timeout")
+			}
+			
+			return nil
 		case err := <-errChan:
 			return err
 		}

@@ -121,16 +121,20 @@ curl http://localhost:8080/google/users/00000000-0000-0000-0000-000000000001
 
 ```bash
 # Run test
-./test.sh
+./scripts/test.sh
 
 # Inspect database
-./inspect-db.sh 
+./scripts/inspect-db.sh 
 
-# DIY
+# Test graceful shutdown
+./scripts/test-graceful-shutdown.sh
+
+# Watch database changes
+./scripts/watch-db.sh
+
+# Manual testing
 docker exec -it vigil-postgres psql -U vigil -d vigil -c "SELECT COUNT(*) FROM users;"
 docker exec -it vigil-postgres psql -U vigil -d vigil -c "SELECT COUNT(*) FROM emails;"
-
-# Add more users to test discovery
 curl -X POST http://localhost:8080/admin/users/add?numUsers=10
 ```
 

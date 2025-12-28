@@ -39,7 +39,7 @@ services:
       - |
         sleep 5
         ./discovery setup --database.url "postgres://vigil:vigil@postgres:5432/vigil?sslmode=disable" || true
-        ./discovery run --database.url "postgres://vigil:vigil@postgres:5432/vigil?sslmode=disable" --tenant_id "00000000-0000-0000-0000-000000000001" --provider.api_url "http://mock-server:8080" --provider.type "google"
+        exec ./discovery run --database.url "postgres://vigil:vigil@postgres:5432/vigil?sslmode=disable" --tenant_id "00000000-0000-0000-0000-000000000001" --provider.api_url "http://mock-server:8080" --provider.type "google"
     depends_on:
       - postgres
       - mock-server

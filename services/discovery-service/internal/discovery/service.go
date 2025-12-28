@@ -40,6 +40,8 @@ type Service struct {
 	emailsPerUser    sync.Map // map[uuid.UUID]*int64 (atomic counter)
 	emailsToQueue    int64    // atomic counter
 	emailsDiscovered int64    // atomic counter
+	// WaitGroup to track active email processing goroutines
+	processingWg sync.WaitGroup
 }
 
 type userEmailDiscovery struct {
@@ -84,6 +86,29 @@ func (s *Service) Run(ctx context.Context, tenantIDStr string) error {
 	s.dynamicFanInAndProcess(ctx)
 
 	return nil
+}
+
+// Shutdown gracefully shuts down the service, waiting for all processing goroutines to complete
+// with a timeout. Returns true if shutdown completed gracefully, false if timeout was reached.
+func (s *Service) Shutdown(timeout time.Duration) bool {
+	log.Printf("Shutting down discovery service, waiting up to %v for processing to complete...", timeout)
+
+	// Channel to signal when WaitGroup completes
+	done := make(chan struct{})
+	go func() {
+		s.processingWg.Wait()
+		close(done)
+	}()
+
+	// Wait for either completion or timeout
+	select {
+	case <-done:
+		log.Println("All processing goroutines completed successfully")
+		return true
+	case <-time.After(timeout):
+		log.Printf("Shutdown timeout (%v) reached, some processing may still be in progress", timeout)
+		return false
+	}
 }
 
 // userDiscoveryService periodically discovers users and sends ADD_USER/REMOVE_USER messages
@@ -407,7 +432,17 @@ func (s *Service) pollEmailsForUser(user discoverymodels.User, emailCh chan<- Em
 // processEmail processes a single email (called from fan-in loop)
 func (s *Service) processEmail(ctx context.Context, ewu EmailWithUser) {
 	// DB operations in goroutine to avoid blocking channel processing
+	s.processingWg.Add(1)
 	go func(ewu EmailWithUser) {
+		defer s.processingWg.Done()
+
+		// Check if context is already cancelled before starting work
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
 		// Store minimal metadata in DB first to check if it's a new unique email
 		isNew, err := s.storeEmail(ctx, ewu.Email, ewu.UserID)
 		if err != nil {

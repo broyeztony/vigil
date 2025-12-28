@@ -22,4 +22,5 @@ echo "Discovery logs (last 10 lines):"
 docker-compose logs --tail=10 discovery-service
 
 echo ""
-echo "Done. Watch logs with: docker-compose logs -f discovery-service"
+echo "Done. Watch logs with: "
+echo "docker-compose logs -f discovery-service"
