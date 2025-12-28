@@ -4,7 +4,7 @@ Email discovery service for Google Workspace and Microsoft O365 that continuousl
 
 ![Vigil Demo](SPECS/vigil_5000.png)
 
-*Vigil graceful shutdown after processing ~270K emails from 5000 concurrent users after ~15m*
+*Vigil graceful shutdown after processing ~270K emails from 5000 concurrent users for ~15m*
 
 ## Architecture
 
