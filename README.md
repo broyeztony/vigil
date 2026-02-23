@@ -4,7 +4,7 @@ Email discovery service for Google Workspace and Microsoft O365 that continuousl
 
 ## Karl Migration
 
-Vigil has been fully migrated to the Karl programming language:  
+Vigil has been fully migrated to the [Karl](https://github.com/broyeztony/Karl) programming language:  
 [broyeztony/vigil_in_karl](https://github.com/broyeztony/vigil_in_karl)
 
 ![Vigil Demo](SPECS/vigil_5000.png)
