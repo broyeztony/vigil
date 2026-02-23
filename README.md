@@ -2,6 +2,11 @@
 
 Email discovery service for Google Workspace and Microsoft O365 that continuously polls for users and emails, stores metadata in PostgreSQL, and prepares emails for fraud analysis.
 
+## Karl Migration
+
+Vigil has been fully migrated to the Karl programming language:  
+[broyeztony/vigil_in_karl](https://github.com/broyeztony/vigil_in_karl)
+
 ![Vigil Demo](SPECS/vigil_5000.png)
 
 *Vigil graceful shutdown after processing ~270K emails from 5000 concurrent users for ~15m*
